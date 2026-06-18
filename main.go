@@ -330,7 +330,13 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/logs", app.logHandler)
 	mux.HandleFunc("/incidents", app.incidentHandler)
-
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        if r.URL.Path != "/" {
+            http.NotFound(w, r)
+            return
+        }
+        http.ServeFile(w, r, "./index.html")
+    })
 	srv := &http.Server{
 		Addr:         ":8080",
 		Handler:      mux,

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LogMind Ops Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes pulse-slow { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .animate-pulse-slow { animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
+
+    <nav class="border-b border-slate-800 bg-slate-900/50 backdrop-blur sticky top-0 z-50 px-6 py-4">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <div class="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
+                <h1 class="text-xl font-bold tracking-wider text-white">LOGMIND // <span class="text-emerald-400 font-medium text-sm">REALTIME ENG</span></h1>
+            </div>
+            <div class="flex items-center space-x-4 text-sm text-slate-400">
+                <span>Sliding Window: <strong class="text-slate-200">60s</strong></span>
+                <span class="border-l border-slate-700 h-4"></span>
+                <span id="last-update">Syncing...</span>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-6 py-8 space-y-8">
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col justify-between">
+                <span class="text-sm font-semibold tracking-wide text-slate-400 uppercase">Active Incidents</span>
+                <div class="flex items-baseline space-x-2 mt-2">
+                    <span id="incident-count" class="text-4xl font-extrabold text-white">0</span>
+                    <span id="incident-status-dot" class="text-emerald-500 text-sm font-medium">● Nominal</span>
+                </div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col justify-between">
+                <span class="text-sm font-semibold tracking-wide text-slate-400 uppercase">System Status</span>
+                <span class="text-2xl font-bold text-emerald-400 mt-2 flex items-center gap-2">
+                    ONLINE <span class="text-xs text-slate-500 font-normal">(Port :8080)</span>
+                </span>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-6 flex flex-col justify-between">
+                <span class="text-sm font-semibold tracking-wide text-slate-400 uppercase">Alert Threshold</span>
+                <span class="text-2xl font-bold text-slate-200 mt-2">&ge; 3 Errors / min</span>
+            </div>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+            <div class="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+                <h2 class="text-lg font-semibold text-white flex items-center gap-2">
+                    ⚠️ Active Incident Triggers
+                </h2>
+                <span class="text-xs bg-slate-800 px-2 py-1 rounded text-slate-400 font-mono animate-pulse-slow">AUTO_REFRESH: 2S</span>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-950 text-slate-400 text-xs uppercase tracking-wider border-b border-slate-800">
+                            <th class="px-6 py-4">Target Service</th>
+                            <th class="px-6 py-4">Incident Type</th>
+                            <th class="px-6 py-4">Severity</th>
+                            <th class="px-6 py-4 text-center">Error Count</th>
+                            <th class="px-6 py-4 text-right">Last Detected</th>
+                        </tr>
+                    </thead>
+                    <tbody id="incidents-table-body" class="divide-y divide-slate-800 text-sm">
+                        <tr id="empty-state">
+                            <td colspan="5" class="px-6 py-12 text-center text-slate-500 font-medium">
+                                No active anomalies detected inside the sliding window. System healthy.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        async function fetchIncidents() {
+            try {
+                const response = await fetch('/incidents');
+                if (!response.ok) throw new Error('API Error');
+                const data = await response.json();
+                
+                updateDashboard(data.incidents || []);
+            } catch (err) {
+                document.getElementById('last-update').innerText = "Connection Lost";
+                document.getElementById('last-update').classList.add('text-red-400');
+            }
+        }
+
+        function updateDashboard(incidents) {
+            const tbody = document.getElementById('incidents-table-body');
+            const countEl = document.getElementById('incident-count');
+            const statusDot = document.getElementById('incident-status-dot');
+            const lastUpdate = document.getElementById('last-update');
+            
+            // Sync current timestamp
+            lastUpdate.innerText = `Last Updated: ${new Date().toLocaleTimeString()}`;
+            lastUpdate.classList.remove('text-red-400');
+
+            countEl.innerText = incidents.length;
+            
+            if (incidents.length === 0) {
+                statusDot.innerText = "● Nominal";
+                statusDot.className = "text-emerald-500 text-sm font-medium";
+                tbody.innerHTML = `
+                    <tr id="empty-state">
+                        <td colspan="5" class="px-6 py-12 text-center text-slate-500 font-medium">
+                            No active anomalies detected inside the sliding window. System healthy.
+                        </td>
+                    </tr>`;
+                return;
+            }
+
+            statusDot.innerText = `● ${incidents.length} Breach(es)`;
+            statusDot.className = "text-amber-500 text-sm font-medium animate-pulse";
+
+            // Inject rows dynamically
+            tbody.innerHTML = incidents.map(inc => `
+                <tr class="hover:bg-slate-800/30 transition-colors">
+                    <td class="px-6 py-4 font-semibold text-slate-200">${escapeHtml(inc.service)}</td>
+                    <td class="px-6 py-4 font-mono text-xs text-amber-400 bg-amber-500/5 rounded px-1.5 py-0.5 inline-block mt-3">${escapeHtml(inc.type)}</td>
+                    <td class="px-6 py-4">
+                        <span class="px-2 py-0.5 text-xs font-bold rounded-full bg-red-500/10 text-red-400 border border-red-500/20 uppercase">
+                            ${escapeHtml(inc.severity)}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 text-center font-bold text-white">${inc.error_count}</td>
+                    <td class="px-6 py-4 text-right text-slate-400 text-xs">${new Date(inc.updated_at * 1000).toLocaleTimeString()}</td>
+                </tr>
+            `).join('');
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        }
+
+        // Long-polling execution loop
+        fetchIncidents();
+        setInterval(fetchIncidents, 2000);
+    </script>
+</body>
+</html>
