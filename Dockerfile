@@ -24,8 +24,11 @@ WORKDIR /app
 # Install runtime dependencies like CA certificates for external requests
 RUN apt-get update && apt-get install -y ca-certificates --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
-# Copy compiled binary from builder stage
+# 1. Copy compiled binary from builder stage
 COPY --from=builder /app/logmind /app/logmind
+
+# 2. FIX: Copy the static UI file so the Go binary can find it at runtime!
+COPY --from=builder /app/index.html /app/index.html
 
 # Expose production engine port
 EXPOSE 8080
