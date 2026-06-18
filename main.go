@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes" // Added missing import
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand" // Added missing import
 	"net/http"
 	"os"
 	"os/signal"
@@ -43,6 +45,86 @@ type Incident struct {
 	UpdatedAt int64  `json:"updated_at"`
 }
 
+// ---------------- MICROSERVICE SIMULATOR ----------------
+
+type SimulatorConfig struct {
+	TargetURL      string
+	TickInterval   time.Duration
+	ActiveServices []string
+}
+
+type MicroserviceSimulator struct {
+	cfg SimulatorConfig
+}
+
+func NewMicroserviceSimulator(cfg SimulatorConfig) *MicroserviceSimulator {
+	return &MicroserviceSimulator{cfg: cfg}
+}
+
+func (ms *MicroserviceSimulator) Start(ctx context.Context) {
+	log.Printf("📡 Microservice Simulator started hitting target: %s", ms.cfg.TargetURL)
+
+	ticker := time.NewTicker(ms.cfg.TickInterval)
+	defer ticker.Stop()
+
+	spikeTracker := time.NewTicker(45 * time.Second)
+	defer spikeTracker.Stop()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Stopping Microservice Simulator...")
+			return
+		case <-ticker.C:
+			for _, service := range ms.cfg.ActiveServices {
+				go func(svc string) {
+					level := "info"
+					msg := "API request completed successfully"
+
+					if rand.Float32() < 0.02 {
+						level = "error"
+						msg = "Internal lookup failure / connection reset by peer"
+					}
+
+					ms.sendPayload(client, Log{
+						Service: svc,
+						Level:   level,
+						Message: msg,
+					})
+				}(service)
+			}
+		case <-spikeTracker.C:
+			targetService := ms.cfg.ActiveServices[rand.Intn(len(ms.cfg.ActiveServices))]
+			log.Printf("🚨 [SIMULATOR] Inducing an error spike on '%s'...", targetService)
+
+			for i := 0; i < 6; i++ {
+				go func(svc string, count int) {
+					ms.sendPayload(client, Log{
+						Service: svc,
+						Level:   "error",
+						Message: fmt.Sprintf("CRITICAL: Out of memory scenario alert #%d", count),
+					})
+				}(targetService, i)
+			}
+		}
+	}
+}
+
+func (ms *MicroserviceSimulator) sendPayload(client *http.Client, payload Log) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	resp, err := client.Post(ms.cfg.TargetURL, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return // Silently ignore drops during initialization or teardowns
+	}
+	defer resp.Body.Close()
+}
+
 // ---------------- SYSTEM STATE ----------------
 
 type App struct {
@@ -56,15 +138,12 @@ type App struct {
 // ---------------- DB INIT (WAL MODE) ----------------
 
 func initDB() *sql.DB {
-	// _journal_mode=WAL enables concurrent reads while writing
-	// _busy_timeout=5000 prevents immediate "database is locked" errors by waiting up to 5s
 	db, err := sql.Open("sqlite3", "./logmind.db?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		log.Fatalf("Failed to open DB: %v", err)
 	}
 
-	// Connection pooling configuration tailored for SQLite
-	db.SetMaxOpenConns(1) // SQLite performs best with sequential writes
+	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(time.Hour)
 
@@ -77,7 +156,7 @@ func initDB() *sql.DB {
         timestamp INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
-	`
+    `
 	if _, err = db.Exec(createTable); err != nil {
 		log.Fatalf("Failed to schema DB: %v", err)
 	}
@@ -94,7 +173,6 @@ func (app *App) startWorkerPool(ctx context.Context) {
 			for {
 				select {
 				case <-ctx.Done():
-					// Drain channel before exiting
 					for logData := range app.logChannel {
 						app.processLog(logData)
 					}
@@ -111,7 +189,6 @@ func (app *App) startWorkerPool(ctx context.Context) {
 }
 
 func (app *App) processLog(l Log) {
-	// 1. Write to DB asynchronously via workers to keep HTTP layer fast
 	_, err := app.db.Exec(
 		"INSERT INTO logs(service, level, message, timestamp) VALUES (?, ?, ?, ?)",
 		l.Service, l.Level, l.Message, l.Timestamp,
@@ -120,7 +197,6 @@ func (app *App) processLog(l Log) {
 		log.Printf("[ERROR] Database write failed: %v", err)
 	}
 
-	// 2. Track sliding window error metrics in memory safely
 	if l.Level == "error" {
 		app.mu.Lock()
 		app.incidentState[l.Service] = append(app.incidentState[l.Service], l.Timestamp)
@@ -143,19 +219,17 @@ func (app *App) logHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if l.Service == "" || l.Level == "" {
-		http.Error(w, "Missing mandatory fields: service, level", http.StatusUnprocessableEntity)
+		http.Error(w, "Missing mandatory fields", http.StatusUnprocessableEntity)
 		return
 	}
 
 	l.Timestamp = time.Now().Unix()
 
-	// Non-blocking channel write. If buffer is full, drop or throw 429 to protect memory
 	select {
 	case app.logChannel <- l:
 		w.WriteHeader(http.StatusAccepted)
 		w.Write([]byte(`{"status":"queued"}`))
 	default:
-		log.Printf("[WARN] Log queue full. Dropping log from service: %s", l.Service)
 		http.Error(w, "Server busy, queue overflow", http.StatusServiceUnavailable)
 	}
 }
@@ -164,7 +238,7 @@ func (app *App) incidentHandler(w http.ResponseWriter, r *http.Request) {
 	var incidents []Incident
 	now := time.Now().Unix()
 
-	app.mu.RLock() // Use read-lock for safe concurrent access
+	app.mu.RLock()
 	for service, timestamps := range app.incidentState {
 		count := len(timestamps)
 		if count >= ErrorThreshold {
@@ -234,9 +308,24 @@ func main() {
 	}
 	defer app.db.Close()
 
-	// Boot up asynchronous background processes
 	app.startWorkerPool(ctx)
 	go app.startEvictionLoop(ctx)
+
+	// Launch the simulator directly alongside the engine server
+	go func() {
+		time.Sleep(1 * time.Second) // Let server bind port first
+		simulator := NewMicroserviceSimulator(SimulatorConfig{
+			TargetURL:    "http://localhost:8080/logs",
+			TickInterval: 400 * time.Millisecond,
+			ActiveServices: []string{
+				"payment-gateway",
+				"auth-service",
+				"inventory-api",
+				"frontend-bff",
+			},
+		})
+		simulator.Start(ctx)
+	}()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/logs", app.logHandler)
@@ -249,7 +338,6 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	// Handle Graceful Shutdown Signals
 	shutdownSig := make(chan os.Signal, 1)
 	signal.Notify(shutdownSig, os.Interrupt, syscall.SIGTERM)
 
@@ -263,14 +351,12 @@ func main() {
 	<-shutdownSig
 	log.Println("Shutdown signal received. Stopping gracefully...")
 
-	// 1. Stop accepting new HTTP requests
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("HTTP shutdown error: %v", err)
 	}
 
-	// 2. Shut down background workers and drain queues
 	cancel()
 	close(app.logChannel)
 	app.wg.Wait()
