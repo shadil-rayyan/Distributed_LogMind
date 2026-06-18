@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   logmind-engine:
     build:
@@ -12,7 +10,6 @@ services:
       - logmind_data:/app/data
     environment:
       - GO_ENV=production
-      # To ensure the DB writes into our persistent volume, change the DB path in main.go to ./data/logmind.db
     restart: always
 
 volumes:

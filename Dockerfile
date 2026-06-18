@@ -1,5 +1,5 @@
 # --- Stage 1: Build Binary ---
-FROM golang:1.23-slim AS builder
+FROM golang:1.23-bookworm AS builder
 
 # Install build essential tools required for CGO (SQLite compiling)
 RUN apt-get update && apt-get install -y gcc g++ make libc6-dev --no-install-recommends && rm -rf /var/lib/apt/lists/*
