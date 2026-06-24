@@ -1,0 +1,92 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  static-security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22'
+    - name: Install govulncheck
+      run: go install golang.org/x/vuln/cmd/govulncheck@latest
+    - name: Run govulncheck
+      run: govulncheck ./...
+    - name: Run Gosec Security Scanner
+      uses: securego/gosec@master
+      with:
+        args: -severity medium -quiet ./...
+
+  semgrep:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run Semgrep SAST
+      run: |
+        docker run --rm -v "${{ github.workspace }}:/src" returntocorp/semgrep semgrep scan --config auto --fail-on-error
+
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run Trivy Vulnerability Scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        severity: 'CRITICAL,HIGH'
+
+  checkov:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run Checkov IaC Scanner
+      uses: bridgecrewio/checkov-action@master
+      with:
+        framework: dockerfile,docker_compose
+        quiet: true
+        output_format: cli
+        soft_fail: false
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22'
+    - name: Build
+      run: go build -v ./...
+    - name: Run Unit Tests
+      run: go test ./tests/unit/... -race -coverprofile=coverage.out
+    - name: Run Integration Tests
+      run: go test ./tests/integration/... -v -timeout 60s
+
+  build-and-push:
+    needs: [static-security, semgrep, trivy, checkov, test]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        push: true
+        tags: logmind/engine:latest,logmind/engine:${{ github.sha }}

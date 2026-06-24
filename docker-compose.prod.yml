@@ -1,0 +1,29 @@
+services:
+  logmind-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logmind_engine_prod
+    ports:
+      - "8080:8080"
+    volumes:
+      - logmind_prod_data:/app/data
+    environment:
+      - GO_ENV=production
+      - PORT=8080
+      - LOGMIND_DB_PATH=/app/data/logmind.db
+      - GOMEMLIMIT=96MiB
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.5'
+
+volumes:
+  logmind_prod_data:
+    driver: local

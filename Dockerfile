@@ -1,5 +1,5 @@
 # --- Stage 1: Build Binary ---
-FROM golang:1.23-bookworm AS builder
+FROM golang:1.22-bookworm AS builder
 
 # Install build essential tools required for CGO (SQLite compiling)
 RUN apt-get update && apt-get install -y gcc g++ make libc6-dev --no-install-recommends && rm -rf /var/lib/apt/lists/*
@@ -14,21 +14,22 @@ RUN go mod download
 COPY . .
 
 # Build the Go app with optimizations and CGO enabled
-RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o logmind .
+RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o logmind cmd/logmind/main.go
 
 # --- Stage 2: Final Secure Runtime ---
 FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Install runtime dependencies like CA certificates for external requests
+# Install runtime dependencies like CA certificates
 RUN apt-get update && apt-get install -y ca-certificates --no-install-recommends && rm -rf /var/lib/apt/lists/*
 
-# 1. Copy compiled binary from builder stage
+# Copy compiled binary and frontend files from builder stage
 COPY --from=builder /app/logmind /app/logmind
-
-# 2. FIX: Copy the static UI file so the Go binary can find it at runtime!
 COPY --from=builder /app/index.html /app/index.html
+
+# Memory limit via ENV for Go 1.19+ soft memory management
+ENV GOMEMLIMIT=96MiB
 
 # Expose production engine port
 EXPOSE 8080
