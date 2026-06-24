@@ -8,10 +8,10 @@ import (
 )
 
 var (
-	LogsIngested = promauto.NewCounterVec(prometheus.CounterOpts{
+	LogsIngested = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "logmind_logs_ingested_total",
 		Help: "Total logs received",
-	}, []string{"service", "level"})
+	})
 
 	QueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "logmind_queue_depth",

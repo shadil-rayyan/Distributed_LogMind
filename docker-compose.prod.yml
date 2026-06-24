@@ -13,11 +13,18 @@ services:
       - PORT=8080
       - LOGMIND_DB_PATH=/app/data/logmind.db
       - GOMEMLIMIT=96MiB
+      - TMPDIR=/tmp
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "10001:10001"
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    mem_limit: 128m
+    cpus: 0.5
     deploy:
       resources:
         limits:

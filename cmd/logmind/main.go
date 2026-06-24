@@ -28,13 +28,16 @@ func init() {
 }
 
 func main() {
-	// Configure structured logging
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
 	slog.Info("Initializing LogMind High-Throughput Engine...")
 
 	cfg := config.LoadConfig()
+	if err := cfg.Validate(); err != nil {
+		slog.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
 
 	db, err := storage.InitDB(cfg.DBPath)
 	if err != nil {
@@ -46,28 +49,30 @@ func main() {
 
 	repo := storage.NewSQLiteLogRepository(db)
 	engine := detection.NewEngine(cfg.SlidingWindowSec)
-	
+
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := restoreIncidentState(startupCtx, repo, engine, cfg.SlidingWindowSec); err != nil {
+		startupCancel()
+		slog.Error("failed to restore incident state from SQLite", "error", err)
+		os.Exit(1)
+	}
+	startupCancel()
+
 	logChannel := make(chan domain.Log, cfg.LogChannelBuffer)
 	logHandler := ingestion.NewLogHandler(logChannel)
 
 	workerPool := ingestion.NewWorkerPool(cfg, repo, engine, logChannel)
 	workerPool.Start()
 
-	// Context for background tasks (like simulator)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	if os.Getenv("ENABLE_SIMULATOR") == "true" {
 		sim := simulator.NewMicroserviceSimulator(simulator.SimulatorConfig{
-			TargetURL:     "http://localhost:" + cfg.Port + "/logs",
-			TickInterval:  400 * time.Millisecond,
-			SpikeInterval: 45 * time.Second,
-			ActiveServices: []string{
-				"payment-gateway",
-				"auth-service",
-				"inventory-api",
-				"frontend-bff",
-			},
+			TargetURL:      "http://localhost:" + cfg.Port + "/logs",
+			TickInterval:   400 * time.Millisecond,
+			SpikeInterval:  45 * time.Second,
+			ActiveServices: []string{"payment-gateway", "auth-service", "inventory-api", "frontend-bff"},
 		})
 		go sim.Start(ctx)
 	}
@@ -95,25 +100,32 @@ func main() {
 	<-shutdownSig
 	slog.Info("Termination vector identified. Initiating graceful engine shutdown sequence...")
 
-	cancel() // Stop background simulator first
+	cancel()
 
-	// Phase 1: Close down network listener edge
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Warn("Timeout while severing active web listeners", "error", err)
 	}
 	shutdownCancel()
 
-	// Phase 2: Safely close internal transport channels to trigger flushing of lingering worker queues
 	close(logChannel)
-
-	// Phase 3: Block wait on storage engine threads to completely write historical entries out
 	workerPool.Wait()
 
-	// Phase 4: Safely drop file locking references to storage structures
 	if err := db.Close(); err != nil {
 		slog.Error("Encountered anomaly during data storage final flush", "error", err)
 	}
 
 	slog.Info("System state preserved. Exit completed successfully.")
+}
+
+func restoreIncidentState(ctx context.Context, repo storage.LogRepository, engine *detection.Engine, windowSec int) error {
+	sinceUnix := time.Now().Add(-time.Duration(windowSec) * time.Second).Unix()
+	logs, err := repo.RecentErrors(ctx, sinceUnix)
+	if err != nil {
+		return err
+	}
+
+	engine.Replay(logs)
+	slog.Info("restored incident state from SQLite", "error_logs", len(logs), "window_seconds", windowSec)
+	return nil
 }

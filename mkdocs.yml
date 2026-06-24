@@ -1,0 +1,17 @@
+site_name: LogMind
+docs_dir: Doc
+site_dir: site
+theme:
+  name: mkdocs
+nav:
+  - Home: index.md
+  - Getting Started: usage.md
+  - Examples: examples.md
+  - Contributing: contributing.md
+  - Decision Log:
+      - Overview: decisions/index.md
+      - Incident Recovery: decisions/incident-recovery.md
+      - Metrics Cardinality: decisions/metrics-cardinality.md
+      - Queue Backpressure: decisions/queue-backpressure.md
+      - Config Validation: decisions/config-validation.md
+      - Container Hardening: decisions/container-hardening.md

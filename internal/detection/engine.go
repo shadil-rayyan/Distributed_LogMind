@@ -2,6 +2,7 @@ package detection
 
 import (
 	"sync"
+
 	"logmind/internal/domain"
 )
 
@@ -36,10 +37,18 @@ func (e *Engine) RecordError(service string, timestamp int64) {
 	m.RecordError(timestamp)
 }
 
+func (e *Engine) Replay(logs []domain.Log) {
+	for _, l := range logs {
+		if l.Level == "error" {
+			e.RecordError(l.Service, l.Timestamp)
+		}
+	}
+}
+
 func (e *Engine) GetMetricMap() map[string]*domain.ServiceMetrics {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	// Return a shallow copy of the map to prevent concurrent map iteration issues
+	// Return a shallow copy of the map to prevent concurrent map iteration issues.
 	snapshot := make(map[string]*domain.ServiceMetrics, len(e.metricMap))
 	for k, v := range e.metricMap {
 		snapshot[k] = v

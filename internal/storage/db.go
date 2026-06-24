@@ -15,7 +15,7 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	db.SetMaxOpenConns(1) // Single writer for SQLite
+	db.SetMaxOpenConns(1) // Single writer for SQLite.
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(time.Hour)
 
@@ -28,6 +28,7 @@ func InitDB(dbPath string) (*sql.DB, error) {
 		timestamp INTEGER
 	);
 	CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_logs_level_timestamp ON logs(level, timestamp);
 	`
 	if _, err = db.Exec(createTable); err != nil {
 		return nil, fmt.Errorf("failed to create tables: %w", err)

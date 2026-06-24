@@ -1,71 +1,39 @@
-# LogMind 🧠
+# LogMind
 
-A lightweight, memory-optimized, zero-dependency distributed log monitoring system. Designed for developers who need to know "what's broken right now" without setting up massive enterprise clusters.
+LogMind is a Go log-ingestion service that stores logs in SQLite and turns recent error bursts into active incidents.
 
-## Features
+## Read First
 
-- **Single Binary**: Compiles down to one executable. No Java, no Elasticsearch, no Kafka required.
-- **Ultra-low Memory (≤30MB RSS)**: Safely runs on tiny VPS instances or local machines without dragging them down.
-- **O(1) Incident Triage**: Tracks rolling error windows natively in RAM before hitting the disk.
-- **Crash-Resilient Queues**: Internal backpressure protects against burst-traffic OOM crashes.
-- **Observability Built-in**: Exposes Prometheus metrics out of the box (`/metrics`).
-- **DevSecOps Ready**: Includes Docker Compose configurations for both development and hardened production setups, along with GitHub Actions CI/CD pipelines.
+- [Documentation home](Doc/index.md)
+- [Getting started](Doc/usage.md)
+- [Runnable examples](Doc/examples.md)
+- [Contributing guide](Doc/contributing.md)
+- [Decision log](Doc/decisions/index.md)
 
-## Getting Started
-
-### Quick Start (Development)
-
-Run the local development environment using Docker Compose:
+## Quick Start
 
 ```bash
 docker compose up -d
-```
-
-### Production Deployment
-
-For production, we use a hardened Docker Compose configuration that enforces strict CPU and memory limits:
-
-```bash
-docker compose -f docker-compose.prod.yml up -d
-```
-
-## API Usage
-
-### 1. Ingest a Log
-
-```bash
 curl -X POST http://localhost:8080/logs \
   -H "Content-Type: application/json" \
-  -d '{"service": "payment-api", "level": "error", "message": "Database connection failed"}'
-```
-
-### 2. View Active Incidents
-
-```bash
+  -d '{"service":"payment-api","level":"error","message":"Database connection failed"}'
 curl http://localhost:8080/incidents
 ```
 
-### 3. Check System Health & Metrics
+## Local Development
 
 ```bash
-curl http://localhost:8080/healthz
-curl http://localhost:8080/metrics
+go run ./cmd/logmind
+go test ./...
+go test -race ./...
 ```
 
-## Development & Testing
+## Documentation Site
 
-This project is built using a clean `cmd/` and `internal/` architecture. 
+The MkDocs source lives in `Doc/`, with the site configuration in `mkdocs.yml`.
 
-To run the unit and integration tests:
+Preview it locally with:
 
 ```bash
-go test ./... -v
+mkdocs serve
 ```
-
-## Security
-
-We run automated security scans using `gosec`, `govulncheck`, and `trivy` in our CI pipelines. For production deployments, the container runs in read-only mode, drops all capabilities, and restricts resource consumption.
-
-## License
-
-MIT

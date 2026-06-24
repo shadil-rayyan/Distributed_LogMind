@@ -24,7 +24,7 @@ func (h *LogHandler) HandleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Limit body size to prevent memory exhaustion
+	// Limit body size to prevent memory exhaustion.
 	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
 
 	var l domain.Log
@@ -42,13 +42,13 @@ func (h *LogHandler) HandleLogs(w http.ResponseWriter, r *http.Request) {
 
 	select {
 	case h.logChannel <- l:
-		observability.LogsIngested.WithLabelValues(l.Service, l.Level).Inc()
+		observability.LogsIngested.Inc()
 		observability.QueueDepth.Inc()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		w.Write([]byte(`{"status":"queued"}`))
-	default:
-		slog.Warn("queue saturated, dropping log", "service", l.Service)
-		http.Error(w, "Engine processing boundaries saturated. Dropping package.", http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"status":"queued"}`))
+	case <-r.Context().Done():
+		slog.Warn("request canceled before log was queued", "service", l.Service)
+		http.Error(w, "Request canceled before queueing log.", http.StatusRequestTimeout)
 	}
 }
